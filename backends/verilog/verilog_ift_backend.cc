@@ -1870,16 +1870,100 @@ static void add_wire(RTLIL::Module *module, std::string name, int width, bool fl
 	}
 }
 
-static void add_precise_cell(RTLIL::Module *module, std::string name, RTLIL::Cell *cell, RTLIL::SigSpec a, RTLIL::SigSpec b, RTLIL::SigSpec y)
+static void add_precise_cell_4_vars(RTLIL::Module *module, std::string name, RTLIL::Cell *cell, RTLIL::SigSpec a, RTLIL::SigSpec b, RTLIL::SigSpec s, RTLIL::SigSpec a_t, RTLIL::SigSpec b_t, RTLIL::SigSpec s_t, RTLIL::SigSpec y_t)
 {
-if (cell->type == "&and"){
-	//at&&bt || b&&at || a && bt
-}
-if (cell->type == "&or"){
-	//at||bt
+		auto width = std::max({a.size(),b.size(),s.size(), y_t.size()});
+
+		if (cell->type == "$mux") {
+		// s?b_t:a_t || s_t&&(a_t||b_t) || a^b
+		add_wire(module, name + "_tmp1", width, false, false);	
+		add_wire(module, name + "_tmp2", width, false, false);
+		add_wire(module, name + "_tmp3", width, false, false);
+		add_wire(module, name + "_tmp4", width, false, false);
+		add_wire(module, name + "_tmp5", width, false, false);
+
+		auto tmp1 = RTLIL::SigSpec(module->wire(name + "_tmp1"));
+		auto tmp2 = RTLIL::SigSpec(module->wire(name + "_tmp2"));
+		auto tmp3 = RTLIL::SigSpec(module->wire(name + "_tmp3"));
+		auto tmp4 = RTLIL::SigSpec(module->wire(name + "_tmp4"));
+		auto tmp5 = RTLIL::SigSpec(module->wire(name + "_tmp5"));
+
+		module->addMux(name + "_tmp1_cell", a_t, b_t, s, tmp1);
+		module->addOr(name + "_tmp2_cell", a_t, b_t, tmp2);
+		module->addAnd(name + "_tmp3_cell", s_t, tmp2, tmp3);
+		module->addXor(name + "_tmp4_cell", a, b, tmp4);
+		module->addOr(name + "_tmp5_cell", tmp1, tmp3, tmp5);
+		module->addOr(name, tmp5, tmp4, y_t);
+		return;
+	}
+	else {
+		log("not implemented cell type %s, fallback to conservative ift for this cell", cell->type.c_str());
+		add_wire(module, name + "_tmp", 1, false, false);
+		auto tmp = RTLIL::SigSpec(module->wire(name + "_tmp"));
+		module->addOr(name + "_tmp", a_t, b_t, tmp);
+		module->addOr(name, s_t, tmp, y_t);
+		return;
+	}
 }
 
-return;
+static void add_precise_cell_3_vars(RTLIL::Module *module, std::string name, RTLIL::Cell *cell, RTLIL::SigSpec a, RTLIL::SigSpec b, RTLIL::SigSpec a_t, RTLIL::SigSpec b_t, RTLIL::SigSpec y_t)
+{
+
+	auto width = std::max({a.size(), b.size(), y_t.size()});
+
+	if (cell->type == "$and" || cell->type == "$logical_and" ){
+		//at&&bt || b&&at || a && bt
+		add_wire(module, name + "_tmp1", width, false, false);	
+		add_wire(module, name + "_tmp2", width, false, false);
+		add_wire(module, name + "_tmp3", width, false, false);
+		add_wire(module, name + "_tmp4", width, false, false);
+
+		auto tmp1 = RTLIL::SigSpec(module->wire(name + "_tmp1"));
+		auto tmp2 = RTLIL::SigSpec(module->wire(name + "_tmp2"));
+		auto tmp3 = RTLIL::SigSpec(module->wire(name + "_tmp3"));
+		auto tmp4 = RTLIL::SigSpec(module->wire(name + "_tmp4"));
+	
+		module->addAnd(name + "_tmp1_cell", a_t, b_t, tmp1);
+	 	module->addAnd(name + "_tmp2_cell", a, b_t, tmp2);
+	 	module->addAnd(name + "_tmp3_cell", a_t, b, tmp3);
+	 	module->addOr(name + "_tmp4_cell", tmp1, tmp2, tmp4);
+	 	module->addOr(name, tmp3, tmp4, y_t);
+		return;
+	}
+	if (cell->type == "$or" || cell->type == "$logical_or"){
+		// /!a&&a_t || !b&&b_t || a_t&&b_t
+		add_wire(module, name + "_tmp1", width, false, false);	
+		add_wire(module, name + "_tmp2", width, false, false);
+		add_wire(module, name + "_tmp3", width, false, false);
+		add_wire(module, name + "_tmp4", width, false, false);
+		add_wire(module, name + "_tmp5", width, false, false);
+		add_wire(module, name + "_tmp6", width, false, false);
+
+		auto tmp1 = RTLIL::SigSpec(module->wire(name + "_tmp1"));
+		auto tmp2 = RTLIL::SigSpec(module->wire(name + "_tmp2"));
+		auto tmp3 = RTLIL::SigSpec(module->wire(name + "_tmp3"));
+		auto tmp4 = RTLIL::SigSpec(module->wire(name + "_tmp4"));
+		auto tmp5 = RTLIL::SigSpec(module->wire(name + "_tmp5"));
+		auto tmp6 = RTLIL::SigSpec(module->wire(name + "_tmp6"));
+
+		module->addNot(name + "_tmp1_cell", a, tmp1);
+		module->addNot(name + "_tmp2_cell", b, tmp2);
+		module->addAnd(name + "_tmp3_cell", tmp1, a_t, tmp3);
+		module->addAnd(name + "_tmp4_cell", tmp2, b_t, tmp4);
+		module->addAnd(name + "_tmp5_cell", a_t, b_t, tmp5);
+		module->addOr(name + "_tmp6_cell", tmp3, tmp4, tmp6);
+		module->addOr(name, tmp5, tmp6, y_t);
+		return;
+	}
+	if (cell->type == "$xor" || cell->type == "$xnor"){		
+		module->addOr(name, a_t,b_t,y_t);
+		return;
+	}
+	else {
+		log("not implemented cell type %s, fallback to conservative ift for this cell", cell->type.c_str());
+		module->addOr(name, a_t,b_t,y_t);
+		return;
+	}
 }
 
 static void add_cell(RTLIL::Module *module, std::string name, RTLIL::Cell *cell, bool precise)
@@ -1895,72 +1979,166 @@ static void add_cell(RTLIL::Module *module, std::string name, RTLIL::Cell *cell,
 	    	ift_cell = module->cell(name);
 			if (ift_cell == nullptr)
 				log_cmd_error("Found incompatible object with same name in module %s!\n", module->name.c_str());
-				log("Module %s already has such an object.\n", module->name.c_str());
+
+			log("Module %s already has such an object.\n", module->name.c_str());
 		}
     	else 
 		{
-        	auto cons = cell->connections();
-       		RTLIL::SigSpec a;
-        	RTLIL::SigSpec b;
-        	RTLIL::SigSpec y;
-        	int counter = 0;  
+			auto cons = cell->connections();
+			// largest cell in yosys is $_MUX16_ which takes 21 vars
+			string signals[] = {"a","b","c","d","e","f","g","h","i","j","k","l","m","n","o","p","q","r","s","t","u","v","w","x","y","z"};
+			dict<string,RTLIL::SigSpec> listOfSig;
+			auto listLength = int(sizeof(signals)/sizeof(signals[0]));
+			for (int i = 0; i < listLength; i++) {
+				auto a = signals[i];
+				auto a_t = a + "_t";
+				RTLIL::SigSpec sig;
+				RTLIL::SigSpec sig_t;
+				listOfSig[a]= sig;
+				listOfSig[a_t] = sig_t;
+			}
 			auto size = cons.size();
+        	int counter = 0;
 
-			if (size == 3) 
+			if (size == 2) 
 			{
-				for (auto con : cons)
-				{
-        			auto wire_ = cell->getPort(con.first).as_wire();
+				for (auto it = cell->connections().begin(); it != cell->connections().end(); ++it, counter++) {
+    				auto port = cell->getPort(it->first);
+					RTLIL::Wire* wire_ ;
+					if (port.is_wire()) {
+						wire_ = port.as_wire(); 
+					} else if (port.is_bit()){
+						auto bit_ = port.as_bit();
+						wire_ = bit_.wire;
+					}
+					else {
+						log_cmd_error("Error: unaccounted type of port");
+					}
+
+        			auto t_wire_name = string(wire_->name.c_str()) + "_t";
+        			auto wire = module->wire(t_wire_name);
+
+    	    		switch (counter) {
+        	        	case 0 : {
+    	            		listOfSig["a_t"] = RTLIL::SigSpec(wire);
+							break;
+        	        	}                
+    	       			case 1 : {
+    	            		listOfSig["y_t"] = RTLIL::SigSpec(wire);
+							break;
+    	        		}
+    	        		
+	    	    	}
+    			}
+				// for operations using only a single expression, no need to differentiate between precise and conservative ift
+		    	module->addOr(name, listOfSig["a_t"], RTLIL::State::S0, listOfSig["y_t"]);
+    			log("Added cell %s to module %s.\n", name.c_str(), module->name.c_str());
+				return;
+			} 
+
+			else if (size == 3) 
+			{
+				for (auto it = cell->connections().begin(); it != cell->connections().end(); ++it, counter++) {
+    				auto port = cell->getPort(it->first);
+					RTLIL::Wire* wire_ ;
+					if (port.is_wire()) {
+						wire_ = port.as_wire(); 
+					} else if (port.is_bit()){
+						auto bit_ = port.as_bit();
+						wire_ = bit_.wire;
+					}
+					else {
+						log_cmd_error("Error: unaccounted type of port");
+					}
+
         			auto t_wire_name = string(wire_->name.c_str()) + "_t";
         			auto wire = module->wire(t_wire_name);
 
             		switch (counter) {
 	    	            case 0 : {
-       	            		a = RTLIL::SigSpec(wire);
+							listOfSig["a"] = it->second;       	            	
+							listOfSig["a_t"] = RTLIL::SigSpec(wire);
+							break;
         	    		}
                     	case 1 : {
-            	        	b = RTLIL::SigSpec(wire);
+							listOfSig["b"] = it->second;
+							listOfSig["b_t"] = RTLIL::SigSpec(wire);
+							break;
             			}
     	            	case 2 : {
-        	            	y = RTLIL::SigSpec(wire);
+        	            	listOfSig["y_t"] = it->second;
+							break;
         	    		}
-            			counter ++;
-        			}	
+        			}					
     			}
 				if (precise) {
-				add_precise_cell(module, name, cell, a,b,y);
+				add_precise_cell_3_vars(module, name, cell, listOfSig["a"], listOfSig["b"], listOfSig["a_t"], listOfSig["b_t"], listOfSig["y_t"]);
 				}
 				else {
-				module->addOr(name, a,b,y);
+				module->addOr(name, listOfSig["a_t"], listOfSig["b_t"], listOfSig["y_t"]);
 				}
 
-    			log("Added cell %s to module %s.\n", name.c_str(), module->name.c_str());
+    			log("Added ift logic cell %s to module %s.\n", name.c_str(), module->name.c_str());
 				return;
-			} 
-			else if (size == 2) 
-			{
-        		for (auto con : cons)
-				{
-            		auto wire_ = cell->getPort(con.first).as_wire();
-       		    	auto t_wire_name = string(wire_->name.c_str()) + "_t";
-    	    		auto wire = module->wire(t_wire_name);
+			} 		
 
-    	    		switch (counter) {
-        	        	case 0 : {
-    	            		a = RTLIL::SigSpec(wire);
-        	        	}                
-    	       			case 1 : {
-    	            		y = RTLIL::SigSpec(wire);
-    	        		}
-    	        		counter ++;
-	    	    	}	
+			else if (size == 4) 
+			{	        	
+				for (auto it = cell->connections().begin(); it != cell->connections().end(); ++it, counter++) {
+    				auto port = cell->getPort(it->first);
+					RTLIL::Wire* wire_ ;
+					if (port.is_wire()) {
+						wire_ = port.as_wire(); 
+					} else if (port.is_bit()){
+						auto bit_ = port.as_bit();
+						wire_ = bit_.wire;
+					}
+					else {
+						log_cmd_error("Error: unaccounted type of port");
+					}
+
+        			auto t_wire_name = string(wire_->name.c_str()) + "_t";
+        			auto wire = module->wire(t_wire_name);
+
+            		switch (counter) {
+	    	            case 0 : {
+							listOfSig["a"] = it->second;
+       	            		listOfSig["a_t"] = RTLIL::SigSpec(wire);
+							break;
+        	    		}
+                    	case 1 : {
+							listOfSig["b"] = it->second;
+            	        	listOfSig["b_t"] = RTLIL::SigSpec(wire);
+							break;
+            			}
+						case 2 : {
+							listOfSig["s"] = it->second;
+            	        	listOfSig["s_t"] = RTLIL::SigSpec(wire);
+            				break;
+						}
+    	            	case 3 : {
+            	        	listOfSig["y_t"] = RTLIL::SigSpec(wire);
+							break;
+        	    		}
+        			}
     			}
-		    	module->addOr(name, a,RTLIL::State::S0,y);
-    			log("Added cell %s to module %s.\n", name.c_str(), module->name.c_str());
+				if (precise) {
+					add_precise_cell_4_vars(module, name, cell, listOfSig["a"], listOfSig["b"], listOfSig["s"], listOfSig["a_t"], listOfSig["b_t"], listOfSig["s_t"], listOfSig["y_t"]);
+				}
+				else {
+				auto width = listOfSig["a_t"].size();
+				add_wire(module, name + "_tmp", width, false, false);
+				auto tmp = RTLIL::SigSpec(module->wire(name + "_tmp"));
+				module->addOr(name + "_tmp_cell", listOfSig["a_t"], listOfSig["b_t"], tmp);
+				module->addOr(name, listOfSig["s_t"], tmp, listOfSig["y_t"]);
+				}
+
+    			log("Added ift logic cell %s to module %s.\n", name.c_str(), module->name.c_str());
 				return;
 			} 
-			else {
-				log_cmd_error("Unaccounted cell type, only accept operations with 1 or 2 operators\n");
+
+			else {			
+				log_cmd_error("Unaccounted cell type %s, only accept operations with 1, 2 or 3 variables\n", cell->type.c_str());
 			}
 		}
 	}
@@ -1986,7 +2164,7 @@ void attach_ift(RTLIL::Module *module, bool precise)
     auto wires = module->wires_;
 	for (auto &wire : wires){
         std::string ift_wire_name = RTLIL::id2cstr(wire.second->name) + std::string("_t");
-        add_wire(module, ift_wire_name, 1, wire.second->port_input, wire.second->port_output);
+        add_wire(module, ift_wire_name, wire.second->width, wire.second->port_input, wire.second->port_output);
     }
 
     auto cells = module->cells_;
