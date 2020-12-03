@@ -1872,7 +1872,8 @@ static void add_wire(RTLIL::Module *module, std::string name, int width, bool fl
 
 static void add_precise_cell_4_vars(RTLIL::Module *module, std::string name, RTLIL::Cell *cell, RTLIL::SigSpec a, RTLIL::SigSpec b, RTLIL::SigSpec s, RTLIL::SigSpec a_t, RTLIL::SigSpec b_t, RTLIL::SigSpec s_t, RTLIL::SigSpec y_t)
 {
-		auto width = std::max({a.size(),b.size(),s.size(), y_t.size()});
+		// auto width = std::max({a.size(),b.size(),s.size(), y_t.size()});
+		auto width = 1;
 
 		if (cell->type == "$mux") {
 		// s?b_t:a_t || s_t&&(a_t||b_t) || a^b
@@ -1909,7 +1910,8 @@ static void add_precise_cell_4_vars(RTLIL::Module *module, std::string name, RTL
 static void add_precise_cell_3_vars(RTLIL::Module *module, std::string name, RTLIL::Cell *cell, RTLIL::SigSpec a, RTLIL::SigSpec b, RTLIL::SigSpec a_t, RTLIL::SigSpec b_t, RTLIL::SigSpec y_t)
 {
 
-	auto width = std::max({a.size(), b.size(), y_t.size()});
+	// auto width = std::max({a.size(), b.size(), y_t.size()});
+	auto width = 1;
 
 	if (cell->type == "$and" || cell->type == "$logical_and" ){
 		//at&&bt || b&&at || a && bt
@@ -2126,8 +2128,7 @@ static void add_cell(RTLIL::Module *module, std::string name, RTLIL::Cell *cell,
 					add_precise_cell_4_vars(module, name, cell, listOfSig["a"], listOfSig["b"], listOfSig["s"], listOfSig["a_t"], listOfSig["b_t"], listOfSig["s_t"], listOfSig["y_t"]);
 				}
 				else {
-				auto width = listOfSig["a_t"].size();
-				add_wire(module, name + "_tmp", width, false, false);
+				add_wire(module, name + "_tmp", 1, false, false);
 				auto tmp = RTLIL::SigSpec(module->wire(name + "_tmp"));
 				module->addOr(name + "_tmp_cell", listOfSig["a_t"], listOfSig["b_t"], tmp);
 				module->addOr(name, listOfSig["s_t"], tmp, listOfSig["y_t"]);
@@ -2164,7 +2165,7 @@ void attach_ift(RTLIL::Module *module, bool precise)
     auto wires = module->wires_;
 	for (auto &wire : wires){
         std::string ift_wire_name = RTLIL::id2cstr(wire.second->name) + std::string("_t");
-        add_wire(module, ift_wire_name, wire.second->width, wire.second->port_input, wire.second->port_output);
+        add_wire(module, ift_wire_name, 1, wire.second->port_input, wire.second->port_output);
     }
 
     auto cells = module->cells_;
